@@ -1,9 +1,8 @@
-
-export const dynamic = 'force-dynamic'
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
-export default async function HomePage() {
+async function AuthRedirect() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -12,4 +11,13 @@ export default async function HomePage() {
   } else {
     redirect('/login')
   }
+  return null
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <AuthRedirect />
+    </Suspense>
+  )
 }
