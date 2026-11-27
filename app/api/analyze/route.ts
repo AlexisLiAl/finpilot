@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server'
 
+const FALLBACK_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.8-flash-lite',
+  'gemini-3.5-flash',
+]
+
 export async function POST(req: Request) {
   try {
     const { transactions, budgets, mode = 'diagnostico', goal = '' } = await req.json()
@@ -41,31 +47,38 @@ Datos financieros actuales del usuario:
 - Movimientos registrados: ${JSON.stringify(transactions)}
 - Presupuestos configurados: ${JSON.stringify(budgets)}`
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    )
+    let lastError = 'Los servidores de IA están ocupados. Intenta de nuevo en unos segundos.'
 
-    const data = await response.json()
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: data.error?.message || 'Error al consultar Gemini.' },
-        { status: response.status }
+    for (const model of FALLBACK_MODELS) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+        }
       )
+
+      const data = await response.json()
+
+      if (response.ok) {
+        const text =
+          data.candidates?.[0]?.content?.parts?.[0]?.text ||
+          'No se pudo generar el análisis en este momento.'
+        return NextResponse.json({ analysis: text })
+      }
+
+      lastError = data.error?.message || lastError
+
+      // Si el error es por alta demanda (503) o límite temporal (429), prueba el siguiente modelo
+      if (response.status !== 503 && response.status !== 429 && response.status !== 404) {
+        break
+      }
     }
 
-    const text =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ||
-      'No se pudo generar el análisis en este momento.'
-
-    return NextResponse.json({ analysis: text })
+    return NextResponse.json({ error: lastError }, { status: 503 })
   } catch (error) {
     console.error('Error en /api/analyze:', error)
     return NextResponse.json(
