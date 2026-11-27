@@ -2,33 +2,44 @@ import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
   try {
-    const { transactions, budgets } = await req.json()
-
-    if (!transactions || transactions.length === 0) {
-      return NextResponse.json(
-        { analysis: 'Aún no tienes movimientos registrados este mes. Agrega algunos ingresos y gastos para que pueda analizar tus finanzas.' },
-        { status: 200 }
-      )
-    }
-
+    const { transactions, budgets, mode = 'diagnostico', goal = '' } = await req.json()
     const apiKey = process.env.GEMINI_API_KEY
+
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'Falta configurar GEMINI_API_KEY en el servidor' },
+        { error: 'Falta configurar GEMINI_API_KEY en el servidor.' },
         { status: 500 }
       )
     }
 
-    const prompt = `Eres FinPilot AI, un asesor financiero personal experto, directo y empático.
-Analiza los siguientes movimientos financieros y presupuestos de un usuario y responde en español con un formato claro y accionable (máximo 180 palabras):
+    const modeInstructions: Record<string, string> = {
+      diagnostico: `Realiza un **Diagnóstico General Completo**:
+1. **Puntaje de Salud Financiera (0 a 100):** Calcula una nota realista según su tasa de ahorro y cumplimiento de presupuestos, explicando brevemente el porqué.
+2. **Mayor Fuga de Dinero y Gastos Hormiga:** Detecta qué categoría consume más recursos o supera su límite, y calcula cuánto ahorraría al año recortándola un 25%.
+3. **Regla 50/30/20 y Proyección:** Compara sus números reales contra la regla ideal (50% necesidades, 30% gustos, 20% ahorro) y estima cómo cerrará el mes.`,
 
-1. **Diagnóstico Rápido:** Porcentaje de ahorro o déficit actual.
-2. **Mayor Fuga de Dinero:** En qué categoría está gastando más o superando su presupuesto.
-3. **3 Consejos Concretos:** Acciones prácticas basadas en sus números reales.
+      ahorro: `Crea un **Plan de Ahorro Exprés de 7 Días** ultra práctico basado estrictamente en sus gastos recientes:
+1. **Meta de Rescate Semanal:** Define cuánto dinero exacto puede liberar esta semana sin afectar sus necesidades básicas.
+2. **3 Retos Accionables (Días 1 al 7):** Propón 3 acciones concretas atacando sus categorías con mayor gasto real (ej. sustituir compras específicas o pausar gastos no esenciales).
+3. **Impacto Mensual:** Muestra cuánto dinero extra acumularía al mes si mantiene estos ajustes.`,
 
-Datos del usuario:
-Transacciones: ${JSON.stringify(transactions)}
-Presupuestos mensuales: ${JSON.stringify(budgets)}`
+      meta: `Actúa como un **Simulador de Metas Financieras**:
+El usuario quiere alcanzar esta meta: "${goal || 'Ahorrar un fondo de emergencia equivalente a 1 mes de gastos'}".
+1. **Viabilidad Real:** Analiza con sus ingresos y gastos actuales cuánto dinero libre le queda realmente al mes para esta meta.
+2. **Tiempo Estimado y Cuota Mensual:** Calcula en cuántos meses lograría la meta al ritmo actual y cuánto debería apartar por semana/mes.
+3. **Acelerador de Meta:** Señala exactamente de qué categorías de gasto puede recortar dinero para alcanzar la meta en la mitad de tiempo.`,
+    }
+
+    const selectedInstruction = modeInstructions[mode] || modeInstructions.diagnostico
+
+    const prompt = `Eres FinPilot AI, un copiloto financiero personal experto, directo, motivador y muy claro.
+Responde en español usando viñetas cortas, negritas para cifras clave y un tono cercano (sin párrafos largos ni tecnicismos innecesarios).
+
+${selectedInstruction}
+
+Datos financieros actuales del usuario:
+- Movimientos registrados: ${JSON.stringify(transactions)}
+- Presupuestos configurados: ${JSON.stringify(budgets)}`
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
@@ -44,17 +55,21 @@ Presupuestos mensuales: ${JSON.stringify(budgets)}`
     const data = await response.json()
 
     if (!response.ok) {
-      throw new Error(data.error?.message || 'Error al conectar con Gemini API')
+      return NextResponse.json(
+        { error: data.error?.message || 'Error al consultar Gemini.' },
+        { status: response.status }
+      )
     }
 
-    const analysisText =
+    const text =
       data.candidates?.[0]?.content?.parts?.[0]?.text ||
       'No se pudo generar el análisis en este momento.'
 
-    return NextResponse.json({ analysis: analysisText })
-  } catch (error: any) {
+    return NextResponse.json({ analysis: text })
+  } catch (error) {
+    console.error('Error en /api/analyze:', error)
     return NextResponse.json(
-      { error: error.message || 'Error interno al analizar finanzas' },
+      { error: 'Error interno al procesar el análisis financiero.' },
       { status: 500 }
     )
   }
