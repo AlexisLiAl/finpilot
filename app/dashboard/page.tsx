@@ -15,6 +15,12 @@ import {
   PieChart as PieChartIcon,
   Target,
   Loader2,
+  AlertTriangle,
+  CheckCircle2,
+  Lightbulb,
+  ArrowRight,
+  BarChart3,
+  Flame,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -41,6 +47,21 @@ type Budget = {
   user_id: string
   category: string
   monthly_limit: number
+}
+
+type AiCard = {
+  type: 'alert' | 'opportunity' | 'tip'
+  title: string
+  metric?: string
+  body: string
+}
+
+type StructuredAnalysis = {
+  score: number
+  scoreLabel: string
+  headline: string
+  cards: AiCard[]
+  quickPrompts?: string[]
 }
 
 const CATEGORIES = [
@@ -96,10 +117,11 @@ export default function DashboardPage() {
   // Filtro historial
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all')
 
-  // Estado IA (3 Modos)
+  // Estado IA (3 Modos + Tarjetas Visuales)
   const [aiMode, setAiMode] = useState<'diagnostico' | 'ahorro' | 'meta'>('diagnostico')
   const [aiGoal, setAiGoal] = useState('')
-  const [aiAnalysis, setAiAnalysis] = useState<string>('')
+  const [structuredAi, setStructuredAi] = useState<StructuredAnalysis | null>(null)
+  const [aiFallbackText, setAiFallbackText] = useState<string>('')
   const [analyzing, setAnalyzing] = useState(false)
 
   useEffect(() => {
@@ -206,9 +228,16 @@ export default function DashboardPage() {
     setSavingBudget(false)
   }
 
-  const handleAnalyzeFinances = async () => {
+  const handleAnalyzeFinances = async (
+    overrideMode?: 'diagnostico' | 'ahorro' | 'meta',
+    overrideGoal?: string
+  ) => {
+    const activeMode = overrideMode || aiMode
+    const activeGoal = overrideGoal !== undefined ? overrideGoal : aiGoal
+
     setAnalyzing(true)
-    setAiAnalysis('')
+    setStructuredAi(null)
+    setAiFallbackText('')
 
     try {
       const response = await fetch('/api/analyze', {
@@ -217,26 +246,27 @@ export default function DashboardPage() {
         body: JSON.stringify({
           transactions,
           budgets,
-          mode: aiMode,
-          goal: aiGoal,
+          mode: activeMode,
+          goal: activeGoal,
         }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        setAiAnalysis(data.error || 'No se pudo obtener respuesta de la IA.')
+        setAiFallbackText(data.error || 'No se pudo obtener respuesta de la IA.')
+      } else if (data.structured) {
+        setStructuredAi(data.structured)
       } else {
-        setAiAnalysis(data.analysis)
+        setAiFallbackText(data.analysis || 'Análisis completado.')
       }
     } catch {
-      setAiAnalysis('Error de conexión al consultar al asesor con IA.')
+      setAiFallbackText('Error de conexión al consultar al asesor con IA.')
     } finally {
       setAnalyzing(false)
     }
   }
 
-  // Cálculos financieros
   const { totalIncome, totalExpense, balance } = useMemo(() => {
     let income = 0
     let expense = 0
@@ -253,7 +283,6 @@ export default function DashboardPage() {
     }
   }, [transactions])
 
-  // Datos para el gráfico de gastos por categoría
   const expenseChartData = useMemo(() => {
     const grouped: Record<string, number> = {}
     for (const t of transactions) {
@@ -264,7 +293,6 @@ export default function DashboardPage() {
     return Object.entries(grouped).map(([name, value]) => ({ name, value }))
   }, [transactions])
 
-  // Movimientos filtrados
   const filteredTransactions = useMemo(() => {
     if (filterType === 'all') return transactions
     return transactions.filter((t) => t.type === filterType)
@@ -311,7 +339,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5">
             <div className="flex items-center justify-between text-slate-400 text-sm mb-2">
-              <span>Balance Total</span>
+              <span>Balance Disponible</span>
               <Wallet className="w-4 h-4 text-emerald-400" />
             </div>
             <p className="text-3xl font-bold text-white">
@@ -340,21 +368,31 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Fila Principal: Gráfico + Asesor IA */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Gráfico de Distribución */}
-          <div className="lg:col-span-2 bg-slate-900/70 border border-slate-800 rounded-2xl p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <PieChartIcon className="w-5 h-5 text-emerald-400" />
-              <h2 className="font-semibold text-base">Distribución de Gastos</h2>
+        {/* Fila Principal: Gráfico + Asesor IA Mejorado */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Gráfico de Distribución (7 columnas) */}
+          <div className="lg:col-span-7 bg-slate-900/70 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <PieChartIcon className="w-5 h-5 text-emerald-400" />
+                <h2 className="font-semibold text-base">Distribución de Gastos</h2>
+              </div>
+              {totalIncome > 0 && (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">
+                  Tasa de ahorro:{' '}
+                  <strong className="text-emerald-400">
+                    {Math.max(0, Math.round((balance / totalIncome) * 100))}%
+                  </strong>
+                </span>
+              )}
             </div>
 
             {expenseChartData.length === 0 ? (
-              <div className="h-64 flex items-center justify-center text-slate-500 text-sm">
+              <div className="h-72 flex items-center justify-center text-slate-500 text-sm">
                 Registra tu primer gasto para visualizar el gráfico por categorías.
               </div>
             ) : (
-              <div className="h-64 w-full">
+              <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -363,9 +401,9 @@ export default function DashboardPage() {
                       nameKey="name"
                       cx="50%"
                       cy="50%"
-                      innerRadius={60}
-                      outerRadius={88}
-                      paddingAngle={3}
+                      innerRadius={65}
+                      outerRadius={95}
+                      paddingAngle={4}
                     >
                       {expenseChartData.map((_, idx) => (
                         <Cell
@@ -390,50 +428,60 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Tarjeta Asesor FinPilot AI (3 Modos) */}
-          <div className="bg-gradient-to-b from-emerald-950/30 to-slate-900/80 border border-emerald-500/25 rounded-2xl p-6 flex flex-col">
-            <div className="flex items-center gap-2 text-emerald-400 font-semibold mb-1.5">
-              <Sparkles className="w-5 h-5" />
-              <h2>Asesor FinPilot AI</h2>
+          {/* Tarjeta Asesor FinPilot AI Rediseñada (5 columnas) */}
+          <div className="lg:col-span-5 bg-gradient-to-b from-emerald-950/35 via-slate-900/90 to-slate-900 border border-emerald-500/30 rounded-2xl p-6 flex flex-col shadow-lg shadow-emerald-950/20">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2 text-emerald-400 font-semibold">
+                <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <h2>Asesor FinPilot AI</h2>
+              </div>
+              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                IA Activa
+              </span>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              Elige un modo de análisis inteligente basado en tus movimientos reales.
+              Diagnóstico inteligente, retos semanales y simulación de metas.
             </p>
 
-            {/* Selector de 3 Modos */}
-            <div className="grid grid-cols-3 gap-2 mb-3">
+            {/* Pestañas de 3 Modos */}
+            <div className="grid grid-cols-3 gap-1.5 bg-slate-950/90 p-1 rounded-xl border border-slate-800 mb-3">
               <button
                 type="button"
                 onClick={() => setAiMode('diagnostico')}
-                className={`py-2 px-2 rounded-lg text-xs font-medium border transition ${
+                className={`py-2 px-2 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition ${
                   aiMode === 'diagnostico'
-                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-emerald-500 text-slate-950 font-semibold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                📊 Diagnóstico
+                <BarChart3 className="w-3.5 h-3.5" />
+                Diagnóstico
               </button>
               <button
                 type="button"
                 onClick={() => setAiMode('ahorro')}
-                className={`py-2 px-2 rounded-lg text-xs font-medium border transition ${
+                className={`py-2 px-2 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition ${
                   aiMode === 'ahorro'
-                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-emerald-500 text-slate-950 font-semibold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                ⚡ Plan 7 Días
+                <Flame className="w-3.5 h-3.5" />
+                Plan 7 Días
               </button>
               <button
                 type="button"
                 onClick={() => setAiMode('meta')}
-                className={`py-2 px-2 rounded-lg text-xs font-medium border transition ${
+                className={`py-2 px-2 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition ${
                   aiMode === 'meta'
-                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-emerald-500 text-slate-950 font-semibold shadow'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                🎯 Simular Meta
+                <Target className="w-3.5 h-3.5" />
+                Meta
               </button>
             </div>
 
@@ -444,43 +492,167 @@ export default function DashboardPage() {
                 value={aiGoal}
                 onChange={(e) => setAiGoal(e.target.value)}
                 placeholder="Ej: Ahorrar $600 para laptop en 3 meses"
-                className="w-full mb-3 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+                className="w-full mb-3 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
               />
             )}
 
             <button
               type="button"
-              onClick={handleAnalyzeFinances}
+              onClick={() => handleAnalyzeFinances()}
               disabled={analyzing}
-              className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2 transition"
+              className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2 transition shadow-md shadow-emerald-500/20"
             >
               {analyzing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Analizando tus datos...
+                  Analizando tus finanzas...
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  {aiMode === 'diagnostico' && 'Generar Diagnóstico'}
-                  {aiMode === 'ahorro' && 'Crear Plan de 7 Días'}
+                  {aiMode === 'diagnostico' && 'Ejecutar Diagnóstico'}
+                  {aiMode === 'ahorro' && 'Generar Plan 7 Días'}
                   {aiMode === 'meta' && 'Simular Mi Meta'}
                 </>
               )}
             </button>
 
-            {aiAnalysis && (
+            {/* Resultado Visual Estructurado */}
+            {structuredAi && (
+              <div className="mt-4 space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                {/* Barra de Puntaje de Salud Financiera */}
+                <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
+                      {aiMode === 'diagnostico' && 'Salud Financiera'}
+                      {aiMode === 'ahorro' && 'Viabilidad del Reto'}
+                      {aiMode === 'meta' && 'Probabilidad de Éxito'}
+                    </span>
+                    <span
+                      className={`text-sm font-bold ${
+                        structuredAi.score >= 75
+                          ? 'text-emerald-400'
+                          : structuredAi.score >= 50
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                      }`}
+                    >
+                      {structuredAi.score}/100
+                    </span>
+                  </div>
+
+                  <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        structuredAi.score >= 75
+                          ? 'bg-emerald-500'
+                          : structuredAi.score >= 50
+                          ? 'bg-amber-400'
+                          : 'bg-rose-500'
+                      }`}
+                      style={{
+                        width: `${Math.min(100, Math.max(5, structuredAi.score))}%`,
+                      }}
+                    />
+                  </div>
+
+                  <p className="text-xs font-medium text-slate-200">
+                    {structuredAi.headline}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {structuredAi.scoreLabel}
+                  </p>
+                </div>
+
+                {/* Tarjetas de Hallazgos */}
+                <div className="space-y-2.5">
+                  {structuredAi.cards?.map((card, idx) => {
+                    const isAlert = card.type === 'alert'
+                    const isOpp = card.type === 'opportunity'
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-xl border ${
+                          isAlert
+                            ? 'bg-rose-950/20 border-rose-500/30'
+                            : isOpp
+                            ? 'bg-emerald-950/20 border-emerald-500/30'
+                            : 'bg-slate-950/80 border-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5">
+                            {isAlert ? (
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                            ) : isOpp ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            ) : (
+                              <Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            )}
+                            <h3 className="text-xs font-semibold text-slate-100">
+                              {card.title}
+                            </h3>
+                          </div>
+
+                          {card.metric && (
+                            <span
+                              className={`text-[11px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                                isAlert
+                                  ? 'bg-rose-500/15 text-rose-300'
+                                  : isOpp
+                                  ? 'bg-emerald-500/15 text-emerald-300'
+                                  : 'bg-slate-800 text-slate-300'
+                              }`}
+                            >
+                              {card.metric}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {card.body}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Chips Rápidos de Seguimiento */}
+                {structuredAi.quickPrompts && structuredAi.quickPrompts.length > 0 && (
+                  <div className="pt-1 flex flex-wrap gap-1.5">
+                    {structuredAi.quickPrompts.map((q, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setAiMode('meta')
+                          setAiGoal(q)
+                          handleAnalyzeFinances('meta', q)
+                        }}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center gap-1 transition"
+                      >
+                        <span>{q}</span>
+                        <ArrowRight className="w-3 h-3 text-emerald-400" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Respaldo si devuelve texto simple o error */}
+            {!structuredAi && aiFallbackText && (
               <div className="mt-4 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
-                {aiAnalysis}
+                {aiFallbackText}
               </div>
             )}
           </div>
         </div>
 
         {/* Fila Inferior: Historial + Registrar Movimiento + Presupuestos */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Columna Izquierda: Historial y Presupuestos */}
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Columna Izquierda: Historial y Presupuestos (7 columnas) */}
+          <div className="lg:col-span-7 space-y-6">
             {/* Historial de Movimientos */}
             <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -643,8 +815,8 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Columna Derecha: Formulario Registrar Movimiento */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 h-fit">
+          {/* Columna Derecha: Formulario Registrar Movimiento (5 columnas) */}
+          <div className="lg:col-span-5 bg-slate-900/70 border border-slate-800 rounded-2xl p-6 h-fit">
             <div className="flex items-center gap-2 mb-4">
               <PlusCircle className="w-5 h-5 text-emerald-400" />
               <h2 className="font-semibold text-base">Registrar Movimiento</h2>

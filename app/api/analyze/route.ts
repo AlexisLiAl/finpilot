@@ -18,34 +18,64 @@ export async function POST(req: Request) {
       )
     }
 
-    const modeInstructions: Record<string, string> = {
-      diagnostico: `Realiza un **Diagnóstico General Completo**:
-1. **Puntaje de Salud Financiera (0 a 100):** Calcula una nota realista según su tasa de ahorro y cumplimiento de presupuestos, explicando brevemente el porqué.
-2. **Mayor Fuga de Dinero y Gastos Hormiga:** Detecta qué categoría consume más recursos o supera su límite, y calcula cuánto ahorraría al año recortándola un 25%.
-3. **Regla 50/30/20 y Proyección:** Compara sus números reales contra la regla ideal (50% necesidades, 30% gustos, 20% ahorro) y estima cómo cerrará el mes.`,
+    const modeContext: Record<string, string> = {
+      diagnostico: `Enfócate en un Diagnóstico General Completo:
+- Calcula un score de salud financiera de 0 a 100 según su tasa de ahorro y pesos de gastos fijos.
+- Identifica la mayor fuga de dinero comparando contra la regla 50/30/20.
+- Da 3 acciones concretas con cifras exactas de ahorro mensual/anual.`,
 
-      ahorro: `Crea un **Plan de Ahorro Exprés de 7 Días** ultra práctico basado estrictamente en sus gastos recientes:
-1. **Meta de Rescate Semanal:** Define cuánto dinero exacto puede liberar esta semana sin afectar sus necesidades básicas.
-2. **3 Retos Accionables (Días 1 al 7):** Propón 3 acciones concretas atacando sus categorías con mayor gasto real (ej. sustituir compras específicas o pausar gastos no esenciales).
-3. **Impacto Mensual:** Muestra cuánto dinero extra acumularía al mes si mantiene estos ajustes.`,
+      ahorro: `Enfócate en un Plan de Ahorro Exprés de 7 Días:
+- Calcula en "score" el porcentaje de viabilidad del reto (0 a 100).
+- Define en "headline" cuánto dinero exacto puede rescatar en 7 días.
+- En "cards" pon los retos concretos (Días 1-2, Días 3-5, Días 6-7) atacando sus gastos reales.`,
 
-      meta: `Actúa como un **Simulador de Metas Financieras**:
-El usuario quiere alcanzar esta meta: "${goal || 'Ahorrar un fondo de emergencia equivalente a 1 mes de gastos'}".
-1. **Viabilidad Real:** Analiza con sus ingresos y gastos actuales cuánto dinero libre le queda realmente al mes para esta meta.
-2. **Tiempo Estimado y Cuota Mensual:** Calcula en cuántos meses lograría la meta al ritmo actual y cuánto debería apartar por semana/mes.
-3. **Acelerador de Meta:** Señala exactamente de qué categorías de gasto puede recortar dinero para alcanzar la meta en la mitad de tiempo.`,
+      meta: `Enfócate en Simular la Meta: "${goal || 'Ahorrar un fondo de emergencia de 1 mes de gastos'}".
+- Calcula en "score" la probabilidad de éxito (0 a 100) según su superávit actual.
+- Define en "headline" el tiempo estimado y cuota mensual recomendada.
+- En "cards" detalla la viabilidad real, el ritmo semanal y cómo acelerar la meta a la mitad de tiempo.`,
     }
 
-    const selectedInstruction = modeInstructions[mode] || modeInstructions.diagnostico
+    const prompt = `Eres FinPilot AI, un asesor financiero personal de nivel ejecutivo, claro y directo.
+Analiza los datos del usuario y responde ÚNICAMENTE con un objeto JSON válido (sin bloques markdown \`\`\`json, sin texto antes ni después, y SIN usar asteriscos ** en los textos).
 
-    const prompt = `Eres FinPilot AI, un copiloto financiero personal experto, directo, motivador y muy claro.
-Responde en español usando viñetas cortas, negritas para cifras clave y un tono cercano (sin párrafos largos ni tecnicismos innecesarios).
+${modeContext[mode] || modeContext.diagnostico}
 
-${selectedInstruction}
+Usa exactamente esta estructura JSON:
+{
+  "score": 75,
+  "scoreLabel": "Ej: Buen margen, gastos fijos altos",
+  "headline": "Resumen ejecutivo de 1 línea con la cifra más importante",
+  "cards": [
+    {
+      "type": "alert",
+      "title": "Título corto del hallazgo",
+      "metric": "$650 / mes (54%)",
+      "body": "Explicación clara y directa en máximo 2 oraciones sin asteriscos."
+    },
+    {
+      "type": "opportunity",
+      "title": "Título de oportunidad de ahorro",
+      "metric": "+$40 / mes",
+      "body": "Acción específica que puede aplicar hoy mismo."
+    },
+    {
+      "type": "tip",
+      "title": "Siguiente paso recomendado",
+      "metric": "Regla 50/30/20",
+      "body": "Consejo práctico basado en sus categorías."
+    }
+  ],
+  "quickPrompts": [
+    "¿Cómo bajo mis gastos fijos?",
+    "Simular fondo de emergencia de $1,000"
+  ]
+}
 
-Datos financieros actuales del usuario:
-- Movimientos registrados: ${JSON.stringify(transactions)}
-- Presupuestos configurados: ${JSON.stringify(budgets)}`
+Nota sobre "type": usa solo "alert" (para riesgos/fugas), "opportunity" (para ahorros/metas) o "tip" (para consejos).
+
+Datos financieros del usuario:
+- Movimientos: ${JSON.stringify(transactions)}
+- Presupuestos: ${JSON.stringify(budgets)}`
 
     let lastError = 'Los servidores de IA están ocupados. Intenta de nuevo en unos segundos.'
 
@@ -64,15 +94,22 @@ Datos financieros actuales del usuario:
       const data = await response.json()
 
       if (response.ok) {
-        const text =
-          data.candidates?.[0]?.content?.parts?.[0]?.text ||
-          'No se pudo generar el análisis en este momento.'
-        return NextResponse.json({ analysis: text })
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+        const cleaned = rawText
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim()
+
+        try {
+          const parsed = JSON.parse(cleaned)
+          return NextResponse.json({ structured: parsed })
+        } catch {
+          return NextResponse.json({ analysis: rawText.replace(/\*\*/g, '') })
+        }
       }
 
       lastError = data.error?.message || lastError
 
-      // Si el error es por alta demanda (503) o límite temporal (429), prueba el siguiente modelo
       if (response.status !== 503 && response.status !== 429 && response.status !== 404) {
         break
       }
